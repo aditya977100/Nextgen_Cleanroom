@@ -1,2 +1,2 @@
-﻿[tool.vercel]
+[tool.vercel]
 entrypoint = "gateway.app:app"
