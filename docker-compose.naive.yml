@@ -1,0 +1,37 @@
+# NAIVE setup: the deliberate mistakes (one network, one shared folder, one shared cache, plaintext logs, no hardening).
+name: cleanroom-naive
+
+x-room-env: &room-env
+  GATEWAY_URL: http://gateway:8000
+  PLAINTEXT_LOGS: "true"
+  PYTHONDONTWRITEBYTECODE: "1"
+
+services:
+  gateway:
+    build: {context: ., dockerfile: gateway/Dockerfile}
+    environment: {MODE: naive, MODEL_URL: "http://model:8002", ADMIN_TOKEN: "${ADMIN_TOKEN:-dev-token-change-me}"}
+    ports: ["8000:8000"]
+    networks: [shared]
+    depends_on: [model]
+  model:
+    build: {context: ., dockerfile: model/Dockerfile}
+    environment: {SALTED: "false"}
+    networks: [shared]
+    volumes: [shared_data:/shared]
+  red:
+    build: {context: ., dockerfile: rooms/Dockerfile}
+    environment: {<<: *room-env, ROOM_NAME: red}
+    networks: [shared]
+    volumes: [shared_data:/shared]
+    depends_on: [gateway]
+  blue:
+    build: {context: ., dockerfile: rooms/Dockerfile}
+    environment: {<<: *room-env, ROOM_NAME: blue}
+    networks: [shared]
+    volumes: [shared_data:/shared]
+    depends_on: [gateway]
+
+networks:
+  shared: {}
+volumes:
+  shared_data: {}

@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.env
+.env.*
+node_modules/
+*.log
+# run output: keep the folder and one sample, ignore the rest (the dashboard keeps its own copies in dashboard/data/)
+results/*.json
+!results/sample-cleanroom.json

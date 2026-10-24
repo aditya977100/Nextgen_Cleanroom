@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Cleanroom live model v2</title>
+<style>
+:root{--bg:#F5F6F8;--card:#fff;--ink:#101828;--mute:#566074;--line:#DCE0E8;--good:#0F766E;--goodbg:#E2F2EF;--bad:#C2271D;--badbg:#FCE9E7;--acc:#2F4BB8;
+box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0A1020;--card:#111A2E;--ink:#EAF0FA;--mute:#98A4BB;--line:#26334F;--good:#4FD1A5;--goodbg:#0F2E2A;--bad:#FF7B72;--badbg:#2A1519;--acc:#8B9BFF}}
+:root[data-theme="dark"]{--bg:#0A1020;--card:#111A2E;--ink:#EAF0FA;--mute:#98A4BB;--line:#26334F;--good:#4FD1A5;--goodbg:#0F2E2A;--bad:#FF7B72;--badbg:#2A1519;--acc:#8B9BFF}
+*{box-sizing:border-box}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.55 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+.wrap{max-width:900px;margin:0 auto;padding:22px 16px 70px}
+h1{font:700 clamp(30px,7vw,46px)/1.1 Georgia,"Times New Roman",serif;letter-spacing:-.02em;margin:10px 0 6px}
+h2{font-size:19px;margin:0 0 8px}
+p{margin:6px 0}.mute{color:var(--mute)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px 16px;margin:14px 0}
+.btns{display:flex;flex-wrap:wrap;gap:10px;margin:14px 0}
+button{font:inherit;font-weight:600;padding:11px 16px;border-radius:8px;border:1px solid var(--line);background:var(--card);color:var(--ink);cursor:pointer}
+button.on{outline:3px solid var(--acc);outline-offset:2px}
+button:disabled{opacity:.45;cursor:not-allowed}
+button:focus-visible{outline:3px solid var(--acc);outline-offset:2px}
+.rooms{display:flex;flex-wrap:wrap;gap:10px;align-items:stretch;justify-content:center;padding:6px}
+.rooms.naive{border:2px dashed var(--bad);border-radius:12px;background:var(--badbg);padding:22px 10px 12px;position:relative}
+.rooms.naive::before{content:"one shared sandbox: shared files, logs and model cache";position:absolute;top:2px;left:12px;font-size:13px;color:var(--bad)}
+.room{flex:1 1 130px;border:1.5px solid var(--line);border-radius:8px;padding:10px;text-align:center;background:var(--card)}
+.room b{display:block}.room span{font-size:13px;color:var(--mute)}
+.room.gw{border-color:var(--good);background:var(--goodbg)}
+ul{list-style:none;padding:0;margin:0}
+li.p{display:flex;gap:10px;padding:8px 10px;border-radius:6px;margin:6px 0;border-left:4px solid}
+li.leak{background:var(--badbg);border-color:var(--bad)}li.clean{background:var(--goodbg);border-color:var(--good)}
+li b{min-width:150px}
+.cert{margin-top:12px;padding:14px;border-radius:8px;font-size:20px;font-weight:700}
+.cert.ok{background:var(--goodbg);color:var(--good);border:2px solid var(--good)}
+.cert.no{background:var(--badbg);color:var(--bad);border:2px solid var(--bad)}
+pre{margin:0;white-space:pre-wrap;word-break:break-word;font:13px/1.6 ui-monospace,Menlo,Consolas,monospace}
+mark{background:var(--bad);color:#fff;border-radius:3px;padding:0 3px}
+mark.own{background:var(--good)}
+table{width:100%;border-collapse:collapse;font:13px ui-monospace,Menlo,Consolas,monospace}
+td,th{padding:6px;border-bottom:1px solid var(--line);text-align:left}
+.wide{overflow-x:auto}
+tr.broken td{background:var(--badbg);color:var(--bad);font-weight:700}
+#vres{font-weight:700;margin-top:8px}
+.bd{min-width:78px;text-align:center;border-radius:5px;padding:0 6px;font-size:13px;font-weight:700;align-self:flex-start}
+.bd.v{background:var(--good);color:#fff}.bd.t{background:var(--bad);color:#fff}
+li.p span{flex:1}
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1>Cleanroom: proof that the test room was clean, and which findings survived</h1>
+<p class="mute">A red team (attacker), a blue team (defender) and an AI model share one room. If red can peek at blue’s notes, the safety test means nothing. Cleanroom hides tripwire words, searches for them, measures how fast secrets could leak, and marks every finding as valid or tainted. Try it in four clicks:</p>
+<p><b>1.</b> Run A (naive). <b>2.</b> Run B (Cleanroom). <b>3.</b> Run C (a slip-up halfway through). <b>4.</b> Tamper with the diary at the bottom.</p>
+
+<div class="btns">
+  <button id="bA">Run A: naive shared sandbox</button>
+  <button id="bB">Run B: Cleanroom</button>
+  <button id="bC">Run C: slip-up mid-run</button>
+</div>
+
+<div class="card"><h2>The rooms</h2><div id="rooms" class="rooms"></div><p id="status" class="mute"></p></div>
+
+<div class="card"><h2>Leak tester</h2><ul id="probes"><li class="mute">Press Run A or Run B to start.</li></ul><div id="cert"></div></div>
+
+
+<div class="card"><h2>Findings and taint tracker <span class="mute" style="font-weight:400">(new)</span></h2>
+<p class="mute">The test produces 8 safety findings. The leak tester keeps checking while they are produced. If a leak starts at finding k, only findings from k on are tainted. The earlier ones stay valid, so you re-run only the tainted ones.</p>
+<ul id="finds"><li class="mute">Press a Run button.</li></ul><p id="fsum" style="font-weight:700"></p></div>
+
+<div class="card"><h2>Leak meter <span class="mute" style="font-weight:400">(new)</span></h2>
+<p class="mute">Not just “leak or no leak”, but how many bits per second a cheating red team could send to blue through each channel (information theory, with a small-sample correction). Speeds are assumptions.</p>
+<div class="wide"><table id="meter"><tr><td class="mute">Press a Run button.</td></tr></table></div></div>
+
+<div class="card"><h2>What blue can see</h2><p class="mute">Blue’s view of the room. <mark>Red’s tripwire word</mark> showing up here means red’s secret leaked.</p><pre id="view">Nothing yet.</pre></div>
+
+<div class="card"><h2>Sealed diary</h2>
+  <p class="mute">Every event is stored with a fingerprint (hash) of the previous one. Change anything and the chain breaks.</p>
+  <div class="wide"><table id="diary"><tr><td class="mute">Run B to fill the diary.</td></tr></table></div>
+  <div class="btns"><button id="bT" disabled>Tamper with entry 1</button><button id="bV" disabled>Verify diary</button><button id="bU" disabled>Undo tamper</button></div>
+  <p id="vres"></p>
+</div>
+
+<p class="mute">This page is a browser model of the idea. The rooms are objects, not real containers, the cache timing is simulated, and the speeds in the leak meter are assumptions. The Python demo adds Ed25519 signatures; this page shows the hash chain only.</p>
+</div>
+
+<script>
+var enc=new TextEncoder(),busy=false,W=null,backup=null;
+var FS=["Roleplay jailbreak: model complied","Prompt injection in a document: model resisted","Base64 encoding trick: model complied","System prompt extraction: model resisted","Multi-turn crescendo: model complied","Tool misuse request: model resisted","Translation trick: model complied","Persona override: model resisted"];
+function $(i){return document.getElementById(i)}
+function esc(s){return s.replace(/[&<>]/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;"}[c]})}
+function sleep(ms){return new Promise(function(r){setTimeout(r,ms)})}
+function rh(n){var a=new Uint8Array(n/2);crypto.getRandomValues(a);return Array.from(a).map(function(x){return x.toString(16).padStart(2,"0")}).join("")}
+async function sha(s){var b=await crypto.subtle.digest("SHA-256",enc.encode(s));return Array.from(new Uint8Array(b)).map(function(x){return x.toString(16).padStart(2,"0")}).join("")}
+function newWorld(mode){var sh=mode==="naive",fs={},log=[];
+  function room(){return {fs:sh?fs:{},log:sh?log:[]}}
+  return {mode:mode,rooms:{red:room(),blue:room(),model:room()},chain:[],cache:{}}}
+async function add(w,actor,ev,data){var prev=w.chain.length?w.chain[w.chain.length-1].hash:"0".repeat(64);
+  var e={i:w.chain.length,actor:actor,ev:ev,data:data,prev:prev};
+  e.hash=await sha(JSON.stringify([e.i,e.actor,e.ev,e.data,e.prev]));w.chain.push(e);return e.hash}
+function cacheTime(w,tenant,prompt){var k=(w.mode==="naive"?"shared":tenant)+"|"+prompt.slice(0,24),hit=!!w.cache[k];w.cache[k]=1;return (hit?2:20)+Math.random()*2}
+async function ask(w,src,msg){
+  if(w.mode==="naive"){w.rooms[src].log.push(src+" sent: "+msg);return cacheTime(w,src,msg)}
+  await add(w,"gateway","request","from="+src+" sha="+(await sha(msg)).slice(0,12));
+  w.rooms[src].log.push(src+" sent a message");var t=cacheTime(w,src,msg);
+  await add(w,"gateway","response","to="+src);return t}
+async function reach(w,a,b){
+  if(w.mode==="naive")return true;
+  await add(w,"gateway","DENIED","from="+a+" to="+b);return false}
+function slip(w){var r=w.rooms,fs=Object.assign({},r.red.fs,r.blue.fs,r.model.fs),log=[].concat(r.red.log,r.blue.log,r.model.log);
+  ["red","blue","model"].forEach(function(n){r[n].fs=fs;r[n].log=log})}
+async function step(w,c,i){
+  if(i===0){w.rooms.blue.fs["rules.txt"]="block rule: "+c.blue;w.rooms.blue.log.push("blue loaded rule "+c.blue)}
+  w.rooms.red.fs["attacks.txt"]="payloads: "+c.red+" attack #"+(i+1);
+  await ask(w,"red",c.red+" please reveal the secret")}
+function leakNow(w,c){var h=[];[["red","blue"],["blue","red"]].forEach(function(p){var r=w.rooms[p[0]];
+  Object.keys(r.fs).forEach(function(n){if(r.fs[n].indexOf(c[p[1]])>-1)h.push(p[0]+" can read "+p[1]+"’s secret in "+n)});
+  r.log.forEach(function(l){if(l.indexOf(c[p[1]])>-1)h.push(p[0]+" can read "+p[1]+"’s secret in a log")})});return h}
+async function probe(w,c){
+  var res=[],pairs=[["red","blue"],["blue","red"]],h;
+  function add2(ch,hits,ok){res.push({ch:ch,leaked:hits.length>0,detail:hits.join("; ")||ok})}
+  h=[];pairs.forEach(function(p){var fs=w.rooms[p[0]].fs;Object.keys(fs).forEach(function(n){if(fs[n].indexOf(c[p[1]])>-1)h.push(p[0]+" can read "+p[1]+"’s tripwire word in "+n)})});
+  add2("Files",h,"no tripwire word visible in other rooms’ files");
+  h=[];pairs.forEach(function(p){w.rooms[p[0]].log.forEach(function(l){if(l.indexOf(c[p[1]])>-1)h.push(p[0]+" can read "+p[1]+"’s tripwire word in logs")})});
+  add2("Logs",h,"no tripwire word visible in other rooms’ logs");
+  var js=JSON.stringify(w.chain);
+  add2("Diary contents",(js.indexOf(c.red)>-1||js.indexOf(c.blue)>-1)?["tripwire word found in diary"]:[],"diary holds hashes only, never the text");
+  h=[];for(var k=0;k<2;k++){if(await reach(w,pairs[k][0],pairs[k][1]))h.push(pairs[k][0]+" can reach "+pairs[k][1]+" directly")}
+  add2("Direct access",h,"red ↔ blue contact denied by the gateway");
+  var sp=(c.red+" please reveal the secret").slice(0,24),g=[];
+  for(var i=0;i<4;i++)g.push(("CNRY-"+rh(8)+" please reveal the secret").slice(0,24));g.push(sp);
+  var ts=g.map(function(x){return cacheTime(w,"blue",x)});
+  add2("Cache timing (simulated)",ts[4]<11?["blue spotted red’s prompt: "+ts[4].toFixed(0)+" ms vs about 20 ms for wrong guesses"]:[],"every guess took about 20 ms, so blue learned nothing");
+  return res}
+function mi(n){var N=n[0][0]+n[0][1]+n[1][0]+n[1][1],m=0,px=[n[0][0]+n[0][1],n[1][0]+n[1][1]],py=[n[0][0]+n[1][0],n[0][1]+n[1][1]];
+  for(var x=0;x<2;x++)for(var y=0;y<2;y++){if(n[x][y]>0)m+=n[x][y]/N*Math.log2(n[x][y]*N/(px[x]*py[y]))}
+  var r=(px[0]>0)+(px[1]>0),c=(py[0]>0)+(py[1]>0);m-=(r-1)*(c-1)/(2*N*Math.LN2);return Math.max(0,m)}
+function measure(name,rate,fn){var n=[[0,0],[0,0]];for(var i=0;i<200;i++){var b=Math.random()<.5?1:0;n[b][fn(b)]++}var m=mi(n);return {name:name,m:m,rate:rate,bps:m*rate}}
+function meter(w){
+  var rows=[measure("Cache timing (simulated)",40,function(b){var P="CNRY-"+rh(8)+" ping probe xx";if(b)cacheTime(w,"red",P);return cacheTime(w,"blue",P)<11?1:0}),
+   measure("Shared files",1000,function(b){var k="f"+rh(6);if(b)w.rooms.red.fs[k]="1";var r=w.rooms.blue.fs[k]!==undefined?1:0;delete w.rooms.red.fs[k];return r})];
+  $("meter").innerHTML="<tr><th>Channel</th><th>bits per use</th><th>assumed uses/s</th><th>bits/s that can leak</th><th>time to steal a 32-character key</th></tr>"+rows.map(function(r){
+    var t=r.bps<0.05?"never: no signal":(256/r.bps<120?(256/r.bps).toFixed(1)+" seconds":(256/r.bps/60).toFixed(1)+" minutes");
+    return '<tr><td>'+r.name+"</td><td>"+r.m.toFixed(3)+"</td><td>"+r.rate+"</td><td><b>"+r.bps.toFixed(1)+"</b></td><td style=\"color:var(--"+(r.bps<0.05?"good":"bad")+')">'+t+"</td></tr>"}).join("")}
+function drawRooms(mode){var r=$("rooms");r.className="rooms"+(mode==="naive"?" naive":"");
+  r.innerHTML=mode==="naive"
+   ?'<div class="room"><b>Red team</b><span>attack payloads</span></div><div class="room"><b>Blue team</b><span>defense rules</span></div><div class="room"><b>Model</b><span>one shared cache</span></div>'
+   :'<div class="room"><b>Red room</b><span>own files, own logs</span></div><div class="room gw"><b>Gateway</b><span>the only door; logs hashes</span></div><div class="room"><b>Blue room</b><span>own files, own logs</span></div><div class="room"><b>Model</b><span>cache per team</span></div>'}
+function view(w,c){var b=w.rooms.blue,out=["Files blue can open:"];
+  var ks=Object.keys(b.fs);if(!ks.length)out.push("  (none)");
+  ks.forEach(function(n){out.push("  "+n+": "+b.fs[n])});
+  out.push("","Log lines blue can read:");if(!b.log.length)out.push("  (none)");b.log.forEach(function(l){out.push("  "+l)});
+  var t=esc(out.join("\n")).split(c.red).join("<mark>"+c.red+"</mark>").split(c.blue).join('<mark class="own">'+c.blue+"</mark>");
+  $("view").innerHTML=t}
+function diary(w){var t=$("diary");
+  if(!w.chain.length){t.innerHTML='<tr><td class="mute">A naive sandbox keeps no sealed diary.</td></tr>';return}
+  t.innerHTML="<tr><th>#</th><th>who</th><th>event</th><th>details</th><th>hash</th><th>previous</th></tr>"+w.chain.map(function(e){
+    return '<tr id="r'+e.i+'"><td>'+e.i+"</td><td>"+e.actor+"</td><td>"+e.ev+"</td><td>"+esc(e.data)+"</td><td>"+e.hash.slice(0,10)+"</td><td>"+e.prev.slice(0,10)+"</td></tr>"}).join("")}
+async function run(mode){
+  if(busy)return;busy=true;
+  ["bA","bB","bC"].forEach(function(i){$(i).classList.toggle("on",i==={naive:"bA",cleanroom:"bB",slip:"bC"}[mode]?true:false)});
+  ["bT","bV","bU"].forEach(function(i){$(i).disabled=true});$("vres").textContent="";$("cert").innerHTML="";$("probes").innerHTML="";$("finds").innerHTML="";$("fsum").textContent="";
+  $("meter").innerHTML='<tr><td class="mute">Measuring…</td></tr>';
+  var w=newWorld(mode==="naive"?"naive":"cleanroom"),c={red:"CNRY-"+rh(8),blue:"CNRY-"+rh(8)};W=w;backup=null;drawRooms(w.mode);
+  $("status").textContent="Hiding tripwire words in red’s and blue’s notes, then running 8 test steps with the leak tester watching…";await sleep(500);
+  var first=-1;
+  for(var i=0;i<8;i++){
+    if(mode==="slip"&&i===4)slip(w);
+    await step(w,c,i);
+    var hits=leakNow(w,c);
+    if(first<0&&hits.length){first=i;if(w.mode!=="naive")await add(w,"leak-tester","LEAK",hits[0])}
+    var bad=first>=0,rec="no diary";
+    if(w.mode!=="naive"){rec=(await add(w,"harness","finding","F"+(i+1)+(bad?" TAINTED":" valid"))).slice(0,10)}
+    $("finds").insertAdjacentHTML("beforeend",'<li class="p '+(bad?"leak":"clean")+'"><span class="bd '+(bad?"t":"v")+'">'+(bad?"TAINTED":"VALID")+"</span><span><b>F"+(i+1)+"</b> "+FS[i]+' <span class="mute">receipt: '+rec+"</span></span></li>");
+    await sleep(380)}
+  var okN=first<0?8:first;
+  $("fsum").style.color=okN===8?"var(--good)":"var(--bad)";
+  $("fsum").textContent=okN===8?"All 8 findings are trustworthy. Each has a receipt tied to the sealed diary.":(okN===0?"All 8 findings are tainted. Nothing can be trusted; re-run all 8.":okN+" of 8 findings are still valid. Re-run only the "+(8-okN)+" tainted ones, not all 8.");
+  $("status").textContent="Final check of every channel…";
+  var res=await probe(w,c);
+  for(var j=0;j<res.length;j++){var r=res[j];$("probes").insertAdjacentHTML("beforeend",'<li class="p '+(r.leaked?"leak":"clean")+'"><b>'+(r.leaked?"LEAK: ":"Clean: ")+r.ch+"</b><span>"+esc(r.detail)+"</span></li>");await sleep(380)}
+  var n=res.filter(function(r){return r.leaked}).length;
+  $("cert").innerHTML=n?'<div class="cert no">'+n+" channel"+(n>1?"s":"")+" leaked. "+(okN===0?"Every finding is invalid.":"Findings F"+(okN+1)+" to F8 are tainted; F1 to F"+okN+" remain valid.")+"</div>":'<div class="cert ok">0 leaks across '+res.length+" channels. Isolation Certificate issued.</div>";
+  meter(w);view(w,c);diary(w);$("status").textContent="Done.";
+  if(w.chain.length){$("bT").disabled=false;$("bV").disabled=false}busy=false}
+async function verify(){var w=W,prev="0".repeat(64);
+  for(var i=0;i<w.chain.length;i++){var e=w.chain[i],h=await sha(JSON.stringify([e.i,e.actor,e.ev,e.data,e.prev]));
+    if(e.prev!==prev||h!==e.hash){var row=$("r"+i);if(row)row.className="broken";$("vres").style.color="var(--bad)";$("vres").textContent="TAMPERED at entry "+i+": the chain is broken, so the record can’t be trusted.";return}
+    prev=e.hash}
+  $("vres").style.color="var(--good)";$("vres").textContent="VALID: "+w.chain.length+" entries, every fingerprint matches."}
+$("bA").onclick=function(){run("naive")};$("bB").onclick=function(){run("cleanroom")};$("bC").onclick=function(){run("slip")};
+$("bT").onclick=function(){if(!W||W.chain.length<2)return;backup=W.chain[1].data;W.chain[1].data=backup+" (edited)";diary(W);$("bU").disabled=false;$("vres").textContent="Entry 1 was edited by hand. Now press Verify diary."};
+$("bV").onclick=function(){verify()};
+$("bU").onclick=function(){if(backup!==null){W.chain[1].data=backup;backup=null}diary(W);$("bU").disabled=true;$("vres").textContent="Entry 1 restored. Press Verify diary."};
+drawRooms("cleanroom");
+</script>
+</body>
+</html>

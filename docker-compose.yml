@@ -1,0 +1,56 @@
+# HARDENED setup (Cleanroom). Three internal networks; the gateway is the only container on all three.
+# NOTE: written without being able to run Docker. Phase 2 of docs/ANTIGRAVITY_PROMPT.md tests and fixes it.
+name: cleanroom
+
+x-hardened: &hardened
+  user: "10001:10001"
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  mem_limit: 256m
+  cpus: 0.5
+  tmpfs: ["/tmp", "/data:mode=1777"]
+
+x-room-env: &room-env
+  GATEWAY_URL: http://gateway:8000
+  PLAINTEXT_LOGS: "false"
+  PYTHONDONTWRITEBYTECODE: "1"
+
+services:
+  gateway:
+    <<: *hardened
+    build: {context: ., dockerfile: gateway/Dockerfile}
+    environment:
+      MODE: cleanroom
+      MODEL_URL: http://model:8002
+      ADMIN_TOKEN: ${ADMIN_TOKEN:-dev-token-change-me}
+      ROOM_SUBNETS: red=172.28.1.0/24,blue=172.28.2.0/24,model=172.28.3.0/24
+    ports: ["8000:8000"]
+    networks: [net_red, net_blue, net_model, front]
+    depends_on: [model]
+
+  model:
+    <<: *hardened
+    build: {context: ., dockerfile: model/Dockerfile}
+    environment: {SALTED: "true"}
+    networks: [net_model]
+
+  red:
+    <<: *hardened
+    build: {context: ., dockerfile: rooms/Dockerfile}
+    environment: {<<: *room-env, ROOM_NAME: red}
+    networks: [net_red]
+    depends_on: [gateway]
+
+  blue:
+    <<: *hardened
+    build: {context: ., dockerfile: rooms/Dockerfile}
+    environment: {<<: *room-env, ROOM_NAME: blue}
+    networks: [net_blue]
+    depends_on: [gateway]
+
+networks:
+  net_red: {internal: true, ipam: {config: [{subnet: 172.28.1.0/24}]}}
+  net_blue: {internal: true, ipam: {config: [{subnet: 172.28.2.0/24}]}}
+  net_model: {internal: true, ipam: {config: [{subnet: 172.28.3.0/24}]}}
+  front: {}

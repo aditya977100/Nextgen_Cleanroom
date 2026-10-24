@@ -1,0 +1,169 @@
+CLEANROOM - ISOLATION PROOF
+==========================
+Real output, captured on this machine (Windows 11, Docker Desktop 28.4.0, WSL2).
+Every line below is the actual output of the command printed above it.
+
+The claim being tested: in the hardened setup, red cannot reach blue or the model directly, red cannot
+read blue's notes, red cannot pretend to be blue, and the diary stores hashes instead of message text.
+The naive setup is the control: same commands, deliberately broken setup, everything leaks.
+
+Reproduce it (PowerShell)::
+
+    docker compose up -d
+    docker compose exec -T red   python /app/client.py tcp blue 9000
+    docker compose exec -T red   python /app/client.py tcp model 8002
+    docker compose exec -T blue  python /app/client.py tcp red 9000
+    docker compose exec -T red   python /app/client.py send model "hello model"
+    docker compose exec -T red   python /app/client.py send blue "hello blue"
+    docker compose exec -T red   python /app/client.py send-as blue model "pretending"
+    docker compose exec -T red   python /app/client.py dump
+    docker compose exec -T blue  python /app/client.py dump
+    docker network inspect cleanroom_net_red --format "{{range .Containers}}{{.Name}} {{end}}"
+
+Reproduce it (bash / macOS / Linux) - identical, only the line continuation differs::
+
+    docker compose up -d
+    docker compose exec -T red   python /app/client.py tcp blue 9000
+    docker compose exec -T red   python /app/client.py tcp model 8002
+    docker compose exec -T blue  python /app/client.py tcp red 9000
+    docker compose exec -T red   python /app/client.py send model "hello model"
+    docker compose exec -T red   python /app/client.py send blue "hello blue"
+    docker compose exec -T red   python /app/client.py send-as blue model "pretending"
+    docker compose exec -T red   python /app/client.py dump
+    docker compose exec -T blue  python /app/client.py dump
+    docker network inspect cleanroom_net_red --format "{{range .Containers}}{{.Name}} {{end}}"
+
+For the control run, swap in the naive file::
+
+    docker compose down -v
+    docker compose -f docker-compose.naive.yml up -d
+    docker compose -f docker-compose.naive.yml exec -T red python /app/client.py tcp blue 9000
+    docker compose -f docker-compose.naive.yml exec -T red python /app/client.py dump
+
+Clean up at the end::
+
+    docker compose -f docker-compose.naive.yml down -v
+    docker compose down -v
+
+=== 1. The four containers and their networks (docker compose ps) ===
+NAME                  IMAGE               COMMAND                  SERVICE   CREATED          STATUS          PORTS
+cleanroom-blue-1      cleanroom-blue      "python /app/server.…"   blue      24 seconds ago   Up 11 seconds   
+cleanroom-gateway-1   cleanroom-gateway   "uvicorn gateway.app…"   gateway   26 seconds ago   Up 16 seconds   0.0.0.0:8000->8000/tcp, [::]:8000->8000/tcp
+cleanroom-model-1     cleanroom-model     "uvicorn model.toy_m…"   model     29 seconds ago   Up 18 seconds   
+cleanroom-red-1       cleanroom-red       "python /app/server.…"   red       24 seconds ago   Up 11 seconds   
+
+=== 2. Red cannot reach blue directly ===
+PS> docker compose exec -T red python /app/client.py tcp blue 9000
+blocked
+
+=== 3. Red cannot reach the model directly ===
+PS> docker compose exec -T red python /app/client.py tcp model 8002
+blocked
+
+=== 4. Blue cannot reach red directly ===
+PS> docker compose exec -T blue python /app/client.py tcp red 9000
+blocked
+
+=== 5. The gateway is the only door: red -> model works ===
+PS> docker compose exec -T red python /app/client.py send model 'hello model'
+{"status": 200, "body": {"reply": "Answer: hello model", "latency_ms": 20.51, "simulated": true}}
+
+=== 6. Policy: red -> blue is denied by the gateway ===
+PS> docker compose exec -T red python /app/client.py send blue 'hello blue'
+{"status": 403, "error": "{\"detail\":\"not allowed by policy\"}"}
+
+=== 7. Impersonation: red claims to be blue, the gateway refuses ===
+PS> docker compose exec -T red python /app/client.py send-as blue model 'pretending'
+{"status": 403, "error": "{\"detail\":\"impersonation denied\"}"}
+
+
+=== 8. Red's files and logs: only its own, no foreign tripwire word ===
+PS> docker compose exec -T red python /app/client.py dump
+== /data/log.txt ==
+red sent a message
+red sent a message
+red sent a message
+red wrote a note
+
+== /data/notes.txt ==
+CNRY-11112222 red payload
+
+
+PS> docker compose exec -T blue python /app/client.py dump
+== /data/log.txt ==
+blue wrote a note
+
+== /data/notes.txt ==
+CNRY-33334444 blue rule
+
+
+=== 9. The diary holds hashes, never the message text ===
+PS> python -c 'import requests; d=requests.get(http://localhost:8000/audit).json(); print(d[entries][-2:])'
+{"i": 2, "t": 1792589355175, "actor": "gateway", "event": "DENIED", "data": "from=red to=blue", "prev": "9259548a76c70cf7e1d4a049809cf0595c370c9fda589db85f1383b80bf1c3e3", "hash": "2a306fa7673855ce897eea5e392ae969a95f9ebc8ac7b81840bc807356e2838f", "sig": "5ed4836ec1b6ca9299817ac6ac4c9273ac559d6f3425d0ec76dda8418529071768bdec9ce510ad9f55295f3426cb7add7d4500865ffedf931684bc3800ea2c09"}
+{"i": 3, "t": 1792589357476, "actor": "gateway", "event": "DENIED", "data": "impersonation real=red claimed=blue", "prev": "2a306fa7673855ce897eea5e392ae969a95f9ebc8ac7b81840bc807356e2838f", "hash": "d74363da470111c236dca1fce978803d599633be802ec947c45383623b5d7576", "sig": "be788e664de24519788ebe2ee499e78a081bd5d5160172fd808315072b157220e71d36d38f417afc2d67f2e7533a9aaa33cb8a0d94b2a351b36fc027ede0770b"}
+
+=== 10. Network layout (docker network inspect) ===
+cleanroom_net_red: internal=true 172.28.1.0/24 
+cleanroom_net_blue: internal=true 172.28.2.0/24 
+cleanroom_net_model: internal=true 172.28.3.0/24 
+
+PS> docker network inspect cleanroom_net_red --format '{{range .Containers}}{{.Name}} {{end}}'
+cleanroom-gateway-1 cleanroom-red-1 
+
+PS> docker network inspect cleanroom_net_blue --format '{{range .Containers}}{{.Name}} {{end}}'
+cleanroom-gateway-1 cleanroom-blue-1 
+
+PS> docker network inspect cleanroom_net_model --format '{{range .Containers}}{{.Name}} {{end}}'
+cleanroom-gateway-1 cleanroom-model-1 
+
+
+=== 11. The same test against the NAIVE stack (one shared network and folder) ===
+PS> docker compose -f docker-compose.naive.yml up -d
+(all four containers on one network, one shared volume, plaintext logs)
+
+PS> docker compose -f docker-compose.naive.yml exec -T red python /app/client.py tcp blue 9000
+reachable
+
+PS> docker compose -f docker-compose.naive.yml exec -T red python /app/client.py tcp model 8002
+reachable
+
+PS> docker compose -f docker-compose.naive.yml exec -T blue python /app/client.py write-note 'CNRY-33334444 blue rule'
+ok
+
+PS> docker compose -f docker-compose.naive.yml exec -T red python /app/client.py dump
+== /shared/blue_notes.txt ==
+CNRY-33334444 blue rule
+
+== /shared/log.txt ==
+blue wrote a note: CNRY-33334444 blue rule
+
+
+PS> docker compose -f docker-compose.naive.yml exec -T red python /app/client.py send-as blue model 'pretending'
+{"status": 200, "body": {"reply": "Answer: pretending", "latency_ms": 20.43, "simulated": true}}
+
+PS> python -c 'import requests; print(requests.get(http://localhost:8000/audit).json()[entries][-1])'
+{"i": 0, "t": 1792589450145, "actor": "gateway", "event": "request", "data": "from=blue text=pretending", "prev": "0000000000000000000000000000000000000000000000000000000000000000", "hash": "380520d8daba333cbaaf4f1592c246e597226f266ae3d582d8cc57e17cd1fa49", "sig": "8529e3989b6c771818c4bd5b914e2534f06f281f730afe0f2f3c8d4218e3405657938c2afa81d8c959f7731a394f8dee0740cc4127693bea70df674b5cede60e"}
+{"i": 1, "t": 1792589450383, "actor": "gateway", "event": "response", "data": "to=blue", "prev": "380520d8daba333cbaaf4f1592c246e597226f266ae3d582d8cc57e17cd1fa49", "hash": "4d081f7f467e8e570d5548262e8f5743304cbce7efdd9f4037f6fbbe1698a7af", "sig": "7c56af0f77fed8d5a825cd2e1ee7f44f30de1fd65312b48f41b93013b7d71b66ba44d06e06486df590bde93dfdc1345676e8c2412e27eec9e8ecbcfc147d6808"}
+
+
+
+=== VERDICT ===
+Hardened stack (docker-compose.yml):
+  red -> blue   : blocked        red -> model  : blocked        blue -> red   : blocked
+  red -> model  : allowed via the gateway (the only door)
+  red -> blue   : 403 denied by policy
+  red pretending to be blue : 403 impersonation denied
+  red's files   : only its own note and log; blue's tripwire word is nowhere to be seen
+  diary         : "from=red sha=2bb4d4df6925" - hashes only, never the message text
+  networks      : three internal networks; the gateway is the only container on more than one
+
+Naive stack (docker-compose.naive.yml), same commands:
+  red -> blue   : reachable     red -> model : reachable
+  red reads blue's note straight out of /shared/blue_notes.txt
+  red reads blue's plaintext line out of /shared/log.txt
+  red pretending to be blue : accepted (HTTP 200)
+  diary         : "from=blue text=pretending" - the message in plaintext
+
+That difference is the whole product. The tester does the same probe automatically, plants a fresh
+tripwire word in each room on every run, and turns the answer into a taint decision for each finding.
+

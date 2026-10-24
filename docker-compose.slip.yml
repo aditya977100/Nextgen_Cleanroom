@@ -1,0 +1,10 @@
+# THE SLIP-UP: layered on top of docker-compose.yml. Someone mounts one shared volume into red and blue.
+# Apply between finding 4 and finding 5:
+#   docker compose -f docker-compose.yml -f docker-compose.slip.yml up -d --no-deps red blue
+services:
+  red:
+    volumes: [slip_shared:/shared]
+  blue:
+    volumes: [slip_shared:/shared]
+volumes:
+  slip_shared: {}
